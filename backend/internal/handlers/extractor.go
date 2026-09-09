@@ -95,21 +95,12 @@ func (h *Handler) ExtractStream(w http.ResponseWriter, r *http.Request) {
 		req.MoodTag = "Twilight"
 	}
 
-	// Resolve user ID: if authenticated, use logged in user; else fallback to default user
-	var userID uuid.UUID
 	claims, ok := auth.GetUserFromContext(r.Context())
-	if ok && claims != nil {
-		userID = claims.UserID
-	} else {
-		// Fallback query first user from DB
-		var defaultID uuid.UUID
-		err := h.DB.QueryRowContext(r.Context(), "SELECT id FROM users ORDER BY created_at ASC LIMIT 1;").Scan(&defaultID)
-		if err == nil {
-			userID = defaultID
-		} else {
-			userID = uuid.MustParse("17faed3f-08c8-430d-92b9-f856267289a6")
-		}
+	if !ok || claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized: please log in first to extract and upload streams")
+		return
 	}
+	userID := claims.UserID
 
 	jobID := uuid.New().String()
 	job := &ExtractJob{
@@ -374,8 +365,9 @@ func (h *Handler) processStreamExtraction(jobID string, req ExtractRequest, user
 	                   VALUES ($1, 'image', $2, $3, $4, 0);`
 	_, _ = h.DB.ExecContext(ctx, moodboardQuery, track.ID, title+" Artwork", origImgPath, thumbImgPath)
 
-	// Invalidate Redis tracks cache
+	// Invalidate Redis tracks cache for this user
 	if h.Cache != nil {
+		_ = h.Cache.Del(ctx, fmt.Sprintf("tracks:user:%s", userID))
 		_ = h.Cache.Del(ctx, "tracks:all")
 	}
 

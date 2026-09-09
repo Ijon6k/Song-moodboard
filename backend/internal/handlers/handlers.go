@@ -166,8 +166,14 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 
 // Track Handlers
 func (h *Handler) ListTracks(w http.ResponseWriter, r *http.Request) {
-	// Try Redis Cache First
-	cacheKey := "tracks:all"
+	claims, ok := auth.GetUserFromContext(r.Context())
+	if !ok || claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized: please sign in to view your sound collection")
+		return
+	}
+
+	// Try Redis Cache First (Scoped per user)
+	cacheKey := fmt.Sprintf("tracks:user:%s", claims.UserID)
 	if h.Cache != nil {
 		cached, err := h.Cache.Get(r.Context(), cacheKey)
 		if err == nil && cached != "" {
@@ -179,8 +185,8 @@ func (h *Handler) ListTracks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	query := `SELECT id, user_id, title, artist, audio_path, duration, mood_tag, created_at 
-	          FROM tracks ORDER BY created_at DESC;`
-	rows, err := h.DB.QueryContext(r.Context(), query)
+	          FROM tracks WHERE user_id = $1 ORDER BY created_at DESC;`
+	rows, err := h.DB.QueryContext(r.Context(), query, claims.UserID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to query tracks")
 		return
@@ -207,6 +213,12 @@ func (h *Handler) ListTracks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) GetTrack(w http.ResponseWriter, r *http.Request) {
+	claims, ok := auth.GetUserFromContext(r.Context())
+	if !ok || claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized: please sign in to view this track")
+		return
+	}
+
 	idStr := chi.URLParam(r, "id")
 	trackID, err := uuid.Parse(idStr)
 	if err != nil {
@@ -214,7 +226,7 @@ func (h *Handler) GetTrack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cacheKey := fmt.Sprintf("track:%s", trackID)
+	cacheKey := fmt.Sprintf("track:%s:%s", claims.UserID, trackID)
 	if h.Cache != nil {
 		cached, err := h.Cache.Get(r.Context(), cacheKey)
 		if err == nil && cached != "" {
@@ -227,11 +239,11 @@ func (h *Handler) GetTrack(w http.ResponseWriter, r *http.Request) {
 
 	var t models.Track
 	trackQuery := `SELECT id, user_id, title, artist, audio_path, duration, mood_tag, created_at 
-	               FROM tracks WHERE id = $1;`
-	err = h.DB.QueryRowContext(r.Context(), trackQuery, trackID).
+	               FROM tracks WHERE id = $1 AND user_id = $2;`
+	err = h.DB.QueryRowContext(r.Context(), trackQuery, trackID, claims.UserID).
 		Scan(&t.ID, &t.UserID, &t.Title, &t.Artist, &t.AudioPath, &t.Duration, &t.MoodTag, &t.CreatedAt)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "track not found")
+		writeError(w, http.StatusNotFound, "track not found or unauthorized")
 		return
 	}
 
@@ -239,9 +251,9 @@ func (h *Handler) GetTrack(w http.ResponseWriter, r *http.Request) {
 	itemsQuery := `SELECT id, track_id, item_type, content, media_path, COALESCE(thumb_path, ''), sort_order, created_at 
 	               FROM moodboard_items WHERE track_id = $1 ORDER BY sort_order ASC, created_at ASC;`
 	rows, err := h.DB.QueryContext(r.Context(), itemsQuery, trackID)
+	t.MoodboardItems = make([]models.MoodboardItem, 0)
 	if err == nil {
 		defer rows.Close()
-		t.MoodboardItems = make([]models.MoodboardItem, 0)
 		for rows.Next() {
 			var it models.MoodboardItem
 			if err := rows.Scan(&it.ID, &it.TrackID, &it.ItemType, &it.Content, &it.MediaPath, &it.ThumbPath, &it.SortOrder, &it.CreatedAt); err == nil {
@@ -264,19 +276,12 @@ func (h *Handler) GetTrack(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) CreateTrack(w http.ResponseWriter, r *http.Request) {
-	var userID uuid.UUID
 	claims, ok := auth.GetUserFromContext(r.Context())
-	if ok && claims != nil {
-		userID = claims.UserID
-	} else {
-		var defaultID uuid.UUID
-		err := h.DB.QueryRowContext(r.Context(), "SELECT id FROM users ORDER BY created_at ASC LIMIT 1;").Scan(&defaultID)
-		if err == nil {
-			userID = defaultID
-		} else {
-			userID = uuid.MustParse("17faed3f-08c8-430d-92b9-f856267289a6")
-		}
+	if !ok || claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized: please log in first to upload a track")
+		return
 	}
+	userID := claims.UserID
 
 	// Limit request size to 32MB
 	_ = r.ParseMultipartForm(32 << 20)
@@ -367,8 +372,9 @@ func (h *Handler) CreateTrack(w http.ResponseWriter, r *http.Request) {
 		_, _ = h.DB.ExecContext(r.Context(), moodItemQuery, track.ID, title+" Artwork", artworkURL, artworkURL)
 	}
 
-	// Invalidate tracks cache in Redis
+	// Invalidate tracks cache in Redis for this user
 	if h.Cache != nil {
+		_ = h.Cache.Del(r.Context(), fmt.Sprintf("tracks:user:%s", userID))
 		_ = h.Cache.Del(r.Context(), "tracks:all")
 	}
 
@@ -377,6 +383,12 @@ func (h *Handler) CreateTrack(w http.ResponseWriter, r *http.Request) {
 
 // DELETE /api/tracks/{id}
 func (h *Handler) DeleteTrack(w http.ResponseWriter, r *http.Request) {
+	claims, ok := auth.GetUserFromContext(r.Context())
+	if !ok || claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized: please sign in to delete this track")
+		return
+	}
+
 	idStr := chi.URLParam(r, "id")
 	trackID, err := uuid.Parse(idStr)
 	if err != nil {
@@ -384,11 +396,8 @@ func (h *Handler) DeleteTrack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Delete associated moodboard items first
-	_, _ = h.DB.ExecContext(r.Context(), "DELETE FROM moodboard_items WHERE track_id = $1;", trackID)
-
-	// Delete track
-	res, err := h.DB.ExecContext(r.Context(), "DELETE FROM tracks WHERE id = $1;", trackID)
+	// Delete track ensuring ownership
+	res, err := h.DB.ExecContext(r.Context(), "DELETE FROM tracks WHERE id = $1 AND user_id = $2;", trackID, claims.UserID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete track: "+err.Error())
 		return
@@ -396,14 +405,20 @@ func (h *Handler) DeleteTrack(w http.ResponseWriter, r *http.Request) {
 
 	rows, _ := res.RowsAffected()
 	if rows == 0 {
-		writeError(w, http.StatusNotFound, "track not found")
+		writeError(w, http.StatusNotFound, "track not found or unauthorized")
 		return
 	}
 
+	// Associated moodboard items are deleted automatically by ON DELETE CASCADE,
+	// but we also clean up explicitly just in case
+	_, _ = h.DB.ExecContext(r.Context(), "DELETE FROM moodboard_items WHERE track_id = $1;", trackID)
+
 	// Invalidate Redis caches
 	if h.Cache != nil {
-		_ = h.Cache.Del(r.Context(), "tracks:all")
+		_ = h.Cache.Del(r.Context(), fmt.Sprintf("tracks:user:%s", claims.UserID))
+		_ = h.Cache.Del(r.Context(), fmt.Sprintf("track:%s:%s", claims.UserID, trackID))
 		_ = h.Cache.Del(r.Context(), fmt.Sprintf("track:%s", trackID))
+		_ = h.Cache.Del(r.Context(), "tracks:all")
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -413,9 +428,9 @@ func (h *Handler) DeleteTrack(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) AddMoodboardItem(w http.ResponseWriter, r *http.Request) {
-	_, ok := auth.GetUserFromContext(r.Context())
-	if !ok {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
+	claims, ok := auth.GetUserFromContext(r.Context())
+	if !ok || claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized: please sign in to add moodboard items")
 		return
 	}
 
@@ -423,6 +438,14 @@ func (h *Handler) AddMoodboardItem(w http.ResponseWriter, r *http.Request) {
 	trackID, err := uuid.Parse(idStr)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid track id")
+		return
+	}
+
+	// Verify track belongs to this user
+	var trackOwnerCount int
+	err = h.DB.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM tracks WHERE id = $1 AND user_id = $2;", trackID, claims.UserID).Scan(&trackOwnerCount)
+	if err != nil || trackOwnerCount == 0 {
+		writeError(w, http.StatusNotFound, "track not found or unauthorized")
 		return
 	}
 
@@ -477,6 +500,7 @@ func (h *Handler) AddMoodboardItem(w http.ResponseWriter, r *http.Request) {
 
 	// Invalidate track detail cache
 	if h.Cache != nil {
+		_ = h.Cache.Del(r.Context(), fmt.Sprintf("track:%s:%s", claims.UserID, trackID))
 		_ = h.Cache.Del(r.Context(), fmt.Sprintf("track:%s", trackID))
 	}
 

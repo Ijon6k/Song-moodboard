@@ -76,25 +76,29 @@ func main() {
 		api.Get("/storage/*", h.StreamStorageObject)
 		api.Head("/storage/*", h.StreamStorageObject)
 
-		// Auth
+		// Auth (Public)
 		api.Post("/auth/register", h.Register)
 		api.Post("/auth/login", h.Login)
 
-		// Tracks
-		api.Get("/tracks", h.ListTracks)
-		api.Get("/tracks/{id}", h.GetTrack)
-		api.With(authMgr.OptionalMiddleware).Post("/tracks", h.CreateTrack)
-		api.With(authMgr.OptionalMiddleware).Delete("/tracks/{id}", h.DeleteTrack)
-
-		// Audio Stream Extraction (YouTube, SoundCloud, Web streams)
-		api.With(authMgr.OptionalMiddleware).Post("/tracks/extract", h.ExtractStream)
-		api.Get("/tracks/extract/{id}", h.GetExtractProgress)
-
-		// Protected endpoints
+		// Protected endpoints (Requires JWT Bearer Token)
 		api.Group(func(protected chi.Router) {
 			protected.Use(authMgr.Middleware)
+
+			// User
 			protected.Get("/auth/me", h.Me)
 			protected.Post("/auth/logout", h.Logout)
+
+			// Personal Tracks
+			protected.Get("/tracks", h.ListTracks)
+			protected.Get("/tracks/{id}", h.GetTrack)
+			protected.Post("/tracks", h.CreateTrack)
+			protected.Delete("/tracks/{id}", h.DeleteTrack)
+
+			// Audio Stream Extraction
+			protected.Post("/tracks/extract", h.ExtractStream)
+			protected.Get("/tracks/extract/{id}", h.GetExtractProgress)
+
+			// Track Moodboard Items
 			protected.Post("/tracks/{id}/items", h.AddMoodboardItem)
 		})
 	})

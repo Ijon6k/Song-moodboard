@@ -2,10 +2,15 @@
   import { onDestroy } from 'svelte';
   import { tracksApi } from '../api/tracks.api.js';
   import { categoryStore } from '../stores/categories.js';
+  import { authStore } from '../stores/auth.js';
+  import { openAuth } from '../stores/ui.js';
 
   export let isOpen = false;
   export let onClose = () => {};
   export let onSuccess = () => {};
+
+  let auth;
+  authStore.subscribe(val => auth = val);
 
   // Active tab: 'stream' (Link extractor) | 'file' (Local upload)
   let activeTab = 'stream';
@@ -196,11 +201,32 @@
         </svg>
       </button>
 
-      <!-- Modal Header -->
-      <div class="mb-5">
-        <h2 class="text-xl font-semibold tracking-tight text-calm-text">Add track</h2>
-        <p class="text-xs text-calm-muted mt-0.5">Extract from a stream link or upload a local audio file.</p>
-      </div>
+      {#if !auth?.isAuthenticated}
+        <div class="py-10 text-center">
+          <div class="w-12 h-12 rounded-full bg-calm-ice text-calm-blue mx-auto flex items-center justify-center mb-4">
+            <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+            </svg>
+          </div>
+          <h3 class="text-base sm:text-lg font-semibold text-calm-text mb-1">Login Diperlukan</h3>
+          <p class="text-xs sm:text-sm text-calm-muted mb-6 max-w-sm mx-auto leading-relaxed">
+            Anda harus masuk ke akun Anda terlebih dahulu untuk mengunggah atau mengekstrak lagu ke koleksi pribadi Anda.
+          </p>
+          <button
+            type="button"
+            on:click={() => { onClose(); openAuth(); }}
+            class="px-5 py-2.5 rounded-md bg-calm-text text-calm-bg text-xs sm:text-sm font-medium hover:opacity-90 transition-all shadow-sm"
+          >
+            Masuk / Buat Akun
+          </button>
+        </div>
+      {:else}
+        <!-- Modal Header -->
+        <div class="mb-5">
+          <h2 class="text-xl font-semibold tracking-tight text-calm-text">Add track</h2>
+          <p class="text-xs text-calm-muted mt-0.5">Extract from a stream link or upload a local audio file.</p>
+        </div>
 
       <!-- Mode Tab Bar (Explicit, intuitive, anti-slop) -->
       {#if !isExtracting}
@@ -542,6 +568,7 @@
           </div>
         </form>
       {/if}
+    {/if}
 
     </div>
   </div>

@@ -57,9 +57,12 @@ services:
     networks:
       - song-moodboard-net
 
-  # 2. Frontend: SvelteKit SSR (Pulls pre-built image)
+  # 2. Frontend: SvelteKit SSR (Pulls pre-built image or builds locally)
   frontend:
-    image: ${IMAGE_FRONTEND:-ghcr.io/ijon6k/song-moodboard-frontend:latest}
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: ${IMAGE_FRONTEND:-song-moodboard-frontend:latest}
     container_name: songmoodboard_frontend
     restart: always
     environment:
@@ -70,9 +73,12 @@ services:
     networks:
       - song-moodboard-net
 
-  # 3. Backend: Go API + yt-dlp & FFmpeg engine (Pulls pre-built image)
+  # 3. Backend: Go API + yt-dlp & FFmpeg engine (Pulls pre-built image or builds locally)
   backend:
-    image: ${IMAGE_BACKEND:-ghcr.io/ijon6k/song-moodboard-backend:latest}
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: ${IMAGE_BACKEND:-song-moodboard-backend:latest}
     container_name: songmoodboard_backend
     restart: always
     environment:

@@ -2,11 +2,16 @@
   import { publicMusicApi } from '../api/publicMusic.api.js';
   import { tracksApi } from '../api/tracks.api.js';
   import { playerStore } from '../stores/player.js';
+  import { authStore } from '../stores/auth.js';
+  import { openAuth } from '../stores/ui.js';
 
   export let isOpen = false;
   export let initialQuery = '';
   export let onClose = () => {};
   export let onImportSuccess = () => {};
+
+  let auth;
+  authStore.subscribe(val => auth = val);
 
   let searchQuery = '';
   let isSearching = false;
@@ -65,6 +70,12 @@
   }
 
   async function handleImport(track) {
+    if (!auth?.isAuthenticated) {
+      onClose();
+      openAuth();
+      return;
+    }
+
     importingId = track.id;
     error = '';
 

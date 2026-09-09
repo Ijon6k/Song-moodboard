@@ -6,15 +6,20 @@
   import { tracksApi } from '$lib/api/tracks.api.js';
   import { queryKeys } from '$lib/queries/keys.js';
   import { playerStore } from '$lib/stores/player.js';
+  import { authStore } from '$lib/stores/auth.js';
+  import { openAuth } from '$lib/stores/ui.js';
   import AddMoodItemModal from '$lib/components/AddMoodItemModal.svelte';
 
   const queryClient = useQueryClient();
   $: trackId = $page.params.id;
 
+  let auth;
+  authStore.subscribe(val => auth = val);
+
   $: trackQuery = createQuery({
     queryKey: queryKeys.tracks.detail(trackId),
     queryFn: () => tracksApi.getById(trackId),
-    enabled: !!trackId,
+    enabled: !!trackId && !!auth?.isAuthenticated,
   });
 
   $: track = $trackQuery.data;
@@ -145,17 +150,51 @@
     {/if}
   </div>
 
-  {#if $trackQuery.isLoading}
+  {#if !auth?.isAuthenticated}
+    <div class="p-12 text-center bg-calm-surface border border-calm-border rounded-xl shadow-sm my-8">
+      <div class="w-12 h-12 rounded-full bg-calm-ice text-calm-blue mx-auto flex items-center justify-center mb-3">
+        <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
+          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+          <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+        </svg>
+      </div>
+      <h2 class="text-lg font-semibold text-calm-text mb-1">Login Diperlukan</h2>
+      <p class="text-xs sm:text-sm text-calm-muted max-w-sm mx-auto mb-6">
+        Lagu dan moodboard ini bersifat privat. Silakan login dengan akun pemilik untuk melihat atau mendengarkan.
+      </p>
+      <div class="flex items-center justify-center gap-3">
+        <button
+          type="button"
+          on:click={openAuth}
+          class="px-5 py-2.5 rounded-md bg-calm-text text-calm-bg text-xs sm:text-sm font-medium hover:opacity-90 transition-all shadow-sm"
+        >
+          Masuk Akun
+        </button>
+        <a
+          href="/"
+          class="px-4 py-2.5 rounded-md border border-calm-border bg-calm-surface text-calm-text text-xs sm:text-sm font-medium hover:bg-calm-mist transition-colors shadow-sm"
+        >
+          Kembali ke Beranda
+        </a>
+      </div>
+    </div>
+  {:else if $trackQuery?.isLoading}
     <div class="h-44 bg-calm-surface border border-calm-border rounded-lg animate-pulse mb-8"></div>
     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
       {#each Array(8) as _}
         <div class="h-64 bg-calm-surface border border-calm-border rounded-lg animate-pulse"></div>
       {/each}
     </div>
-  {:else if $trackQuery.isError}
-    <div class="p-10 text-center bg-calm-surface border border-rose-500/20 rounded-lg text-rose-600 dark:text-rose-400 text-sm">
-      <p class="font-medium mb-1">Could not load track</p>
-      <p class="text-xs opacity-75">{$trackQuery.error?.message}</p>
+  {:else if $trackQuery?.isError}
+    <div class="p-12 text-center bg-calm-surface border border-rose-500/20 rounded-xl text-rose-600 dark:text-rose-400 text-sm shadow-sm my-8">
+      <p class="font-semibold text-base mb-1">Tidak Dapat Mengakses Lagu</p>
+      <p class="text-xs opacity-80 mb-5">{$trackQuery.error?.message || 'Lagu tidak ditemukan atau Anda tidak memiliki akses ke lagu ini.'}</p>
+      <a
+        href="/"
+        class="inline-block px-4 py-2 rounded-md bg-calm-text text-calm-bg text-xs font-medium hover:opacity-90 transition-all shadow-sm"
+      >
+        Kembali ke Perpustakaan Saya
+      </a>
     </div>
   {:else if track}
     <!-- Track Master Header: Minimalist, Balanced, No Capslock Slop -->
