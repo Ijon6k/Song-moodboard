@@ -1,63 +1,94 @@
+# =============================================================================
+# Song-moodboard: Standalone Self-Hosted Docker Compose
+# Download only this file, then run: docker compose up -d
+# Zero local file dependencies (Nginx & SeaweedFS configs are generated inline)
+# =============================================================================
 services:
-  # ---------------------------------------------------------------------------
-  # 1. Reverse Proxy: Nginx (The ONLY service exposing ports to the host)
-  # ---------------------------------------------------------------------------
+  # 1. Reverse Proxy: Nginx (Gateway port 1122)
   nginx:
     image: nginx:1.27-alpine
     container_name: songmoodboard_nginx
-    restart: unless-stopped
+    restart: always
     ports:
-      - "1122:80"
-    volumes:
-      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - "${PORT:-1122}:80"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        cat <<'EOF' > /etc/nginx/conf.d/default.conf
+        resolver 127.0.0.11 valid=10s ipv6=off;
+        client_max_body_size 50M;
+
+        server {
+            listen 80;
+            server_name _;
+
+            location /api/ {
+                set $$backend http://backend:8080;
+                proxy_pass $$backend;
+                proxy_http_version 1.1;
+                proxy_set_header Upgrade $$http_upgrade;
+                proxy_set_header Connection "upgrade";
+                proxy_set_header Host $$host;
+                proxy_set_header X-Real-IP $$remote_addr;
+                proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $$scheme;
+                proxy_buffering off;
+                proxy_read_timeout 120s;
+            }
+
+            location / {
+                set $$frontend http://frontend:3000;
+                proxy_pass $$frontend;
+                proxy_http_version 1.1;
+                proxy_set_header Upgrade $$http_upgrade;
+                proxy_set_header Connection "upgrade";
+                proxy_set_header Host $$host;
+                proxy_set_header X-Real-IP $$remote_addr;
+                proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $$scheme;
+            }
+        }
+        EOF
+        exec nginx -g "daemon off;"
     depends_on:
-      backend:
-        condition: service_started
-      frontend:
-        condition: service_started
+      - frontend
+      - backend
     networks:
       - song-moodboard-net
 
-  # ---------------------------------------------------------------------------
-  # 2. Frontend: SvelteKit SSR (Run via Bun)
-  # ---------------------------------------------------------------------------
+  # 2. Frontend: SvelteKit SSR (Pulls pre-built image)
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
+    image: ${IMAGE_FRONTEND:-ghcr.io/ijon6k/song-moodboard-frontend:latest}
     container_name: songmoodboard_frontend
-    restart: unless-stopped
+    restart: always
     environment:
       - NODE_ENV=production
       - PORT=3000
       - HOST=0.0.0.0
-      - ORIGIN=http://localhost:1122
+      - ORIGIN=${APP_ORIGIN:-http://localhost:1122}
     networks:
       - song-moodboard-net
 
-  # ---------------------------------------------------------------------------
-  # 3. Backend: Go REST API (~15MB minimal Alpine binary)
-  # ---------------------------------------------------------------------------
+  # 3. Backend: Go API + yt-dlp & FFmpeg engine (Pulls pre-built image)
   backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+    image: ${IMAGE_BACKEND:-ghcr.io/ijon6k/song-moodboard-backend:latest}
     container_name: songmoodboard_backend
-    restart: unless-stopped
+    restart: always
     environment:
       - PORT=8080
       - DB_HOST=postgres
       - DB_PORT=5432
-      - DB_USER=songmoodboard
-      - DB_PASSWORD=songmoodboard_secret
-      - DB_NAME=songmoodboard_db
+      - DB_USER=${DB_USER:-songmoodboard}
+      - DB_PASSWORD=${DB_PASSWORD:-songmoodboard_secret}
+      - DB_NAME=${DB_NAME:-songmoodboard_db}
       - DB_SSLMODE=disable
       - REDIS_ADDR=redis:6379
       - SEAWEED_ENDPOINT=seaweedfs:8333
-      - SEAWEED_ACCESS_KEY=anykey
-      - SEAWEED_SECRET_KEY=anysecret
-      - SEAWEED_BUCKET=songmoodboard
-      - JWT_SECRET=super-secret-twilight-haze-key-2026
+      - SEAWEED_ACCESS_KEY=${SEAWEED_ACCESS_KEY:-anykey}
+      - SEAWEED_SECRET_KEY=${SEAWEED_SECRET_KEY:-anysecret}
+      - SEAWEED_BUCKET=${SEAWEED_BUCKET:-songmoodboard}
+      - JWT_SECRET=${JWT_SECRET:-super-secret-twilight-haze-key-2026}
     depends_on:
       postgres:
         condition: service_healthy
@@ -66,34 +97,30 @@ services:
     networks:
       - song-moodboard-net
 
-  # ---------------------------------------------------------------------------
   # 4. Relational Database: PostgreSQL 16
-  # ---------------------------------------------------------------------------
   postgres:
     image: postgres:16-alpine
     container_name: songmoodboard_postgres
-    restart: unless-stopped
+    restart: always
     environment:
-      - POSTGRES_USER=songmoodboard
-      - POSTGRES_PASSWORD=songmoodboard_secret
-      - POSTGRES_DB=songmoodboard_db
+      - POSTGRES_USER=${DB_USER:-songmoodboard}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-songmoodboard_secret}
+      - POSTGRES_DB=${DB_NAME:-songmoodboard_db}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U songmoodboard -d songmoodboard_db"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-songmoodboard} -d ${DB_NAME:-songmoodboard_db}"]
       interval: 5s
       timeout: 5s
       retries: 5
     networks:
       - song-moodboard-net
 
-  # ---------------------------------------------------------------------------
-  # 5. In-Memory Cache & Session Engine: Redis 7
-  # ---------------------------------------------------------------------------
+  # 5. In-Memory Cache: Redis 7
   redis:
     image: redis:7-alpine
     container_name: songmoodboard_redis
-    restart: unless-stopped
+    restart: always
     volumes:
       - redis_data:/data
     healthcheck:
@@ -104,30 +131,46 @@ services:
     networks:
       - song-moodboard-net
 
-  # ---------------------------------------------------------------------------
-  # 6. Distributed Object Storage: SeaweedFS (Master + Volume + Filer + S3)
-  # ---------------------------------------------------------------------------
+  # 6. Object Storage: SeaweedFS (Master + Volume + S3 Gateway)
   seaweedfs:
     image: chrislusf/seaweedfs:latest
     container_name: songmoodboard_seaweedfs
-    restart: unless-stopped
-    command: "server -s3 -s3.config=/etc/seaweedfs/s3.json -dir=/data"
+    restart: always
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        mkdir -p /etc/seaweedfs
+        cat <<'EOF' > /etc/seaweedfs/s3.json
+        {
+          "identities": [
+            {
+              "name": "anonymous",
+              "actions": ["Admin", "Read", "Write"]
+            },
+            {
+              "name": "song-moodboard",
+              "credentials": [
+                {
+                  "accessKey": "${SEAWEED_ACCESS_KEY:-anykey}",
+                  "secretKey": "${SEAWEED_SECRET_KEY:-anysecret}"
+                }
+              ],
+              "actions": ["Admin", "Read", "Write"]
+            }
+          ]
+        }
+        EOF
+        exec weed server -s3 -s3.config=/etc/seaweedfs/s3.json -dir=/data
     volumes:
       - seaweedfs_data:/data
-      - ./docker/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
     networks:
       - song-moodboard-net
 
-# -----------------------------------------------------------------------------
-# Isolated Private Network
-# -----------------------------------------------------------------------------
 networks:
   song-moodboard-net:
     driver: bridge
 
-# -----------------------------------------------------------------------------
-# Persistent Volumes
-# -----------------------------------------------------------------------------
 volumes:
   postgres_data:
   redis_data:

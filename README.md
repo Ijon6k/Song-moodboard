@@ -10,7 +10,92 @@ Self-hosted music library with YouTube/stream extraction, object storage, and mo
 
 ---
 
-## Stack
+## Quick Start (Self-Hosted)
+
+Run the entire app with a single `docker-compose.yml`. No source code, no build steps required.
+
+### 1. Download Compose & Example Config
+
+```bash
+mkdir song-moodboard && cd song-moodboard
+
+# Download the standalone compose file
+curl -O https://raw.githubusercontent.com/Ijon6k/Song-moodboard/main/docker-compose.yml
+
+# (Optional) Download .env.example if you want to customize credentials
+curl -O https://raw.githubusercontent.com/Ijon6k/Song-moodboard/main/.env.example
+cp .env.example .env
+```
+
+> **Note:** Creating `.env` is **optional**. If omitted, safe default local credentials and port `1122` will be used automatically.
+
+### 2. Start
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+Open **`http://localhost:1122`** (or `http://your-server-ip:1122`).
+
+---
+
+## Maintenance & Commands
+
+### Updating to Latest Release
+
+```bash
+docker compose pull
+docker compose up -d --remove-orphans
+```
+
+### Useful Commands
+
+```bash
+# View logs
+docker compose logs -f
+
+# Check container status
+docker compose ps
+
+# Stop containers
+docker compose down
+
+# Stop and wipe database/storage volumes (destructive!)
+docker compose down -v
+```
+
+### Rollback to a Specific Version
+
+```bash
+# By semver tag
+IMAGE_BACKEND=ghcr.io/ijon6k/song-moodboard-backend:v0.1.0 \
+IMAGE_FRONTEND=ghcr.io/ijon6k/song-moodboard-frontend:v0.1.0 \
+  docker compose up -d
+
+# By commit SHA
+IMAGE_BACKEND=ghcr.io/ijon6k/song-moodboard-backend:sha-a3f9c21 \
+IMAGE_FRONTEND=ghcr.io/ijon6k/song-moodboard-frontend:sha-a3f9c21 \
+  docker compose up -d
+```
+
+---
+
+## Development (Build from Source)
+
+If you are cloning this repository to modify the code and build locally:
+
+```bash
+git clone https://github.com/Ijon6k/Song-moodboard.git
+cd Song-moodboard
+
+# Build and run with dev compose
+docker compose -f docker-compose.dev.yml up -d --build
+```
+
+---
+
+## Architecture & Stack
 
 - **Frontend**: SvelteKit (Bun)
 - **Backend**: Go 1.23, Chi router
@@ -27,149 +112,16 @@ Browser → Nginx (:1122)
               /*     → SvelteKit SSR (:3000)
 ```
 
+Only port `1122` is exposed to the host. Internal services (Postgres, Redis, SeaweedFS, Go API) communicate over an isolated Docker bridge network.
+
 ---
 
 ## Image Tags
 
-Images are built and pushed to GHCR automatically via GitHub Actions.
+Images are built and pushed to GHCR automatically via GitHub Actions:
 
 | Trigger | Tags |
 |---|---|
 | Push to `dev` | `:dev`, `:sha-<commit>` |
 | Push to `main` | `:sha-<commit>` |
 | Git tag `v*.*.*` | `:latest`, `:<version>`, `:<major>.<minor>`, `:sha-<commit>` |
-
-```bash
-# Stable release (latest git tag)
-ghcr.io/ijon6k/song-moodboard-backend:latest
-
-# Preview / work in progress
-ghcr.io/ijon6k/song-moodboard-backend:dev
-
-# Specific commit (any branch)
-ghcr.io/ijon6k/song-moodboard-backend:sha-a3f9c21
-
-# Specific version
-ghcr.io/ijon6k/song-moodboard-backend:v0.1.0
-```
-
----
-
-## Development (Local)
-
-Requirements: Docker, Docker Compose.
-
-```bash
-git clone https://github.com/Ijon6k/Song-moodboard.git
-cd Song-moodboard
-
-docker compose up -d --build
-```
-
-Open `http://localhost:1122`.
-
----
-
-## Self-Hosting
-
-Server only needs two config files and Docker. No source code, no build step.
-
-### Requirements
-
-- A VPS or any server with Docker + Docker Compose installed
-- Port `1122` open on your firewall (or change it in `.env`)
-
-### 1. Get the config files
-
-```bash
-mkdir song-moodboard && cd song-moodboard
-
-# Download only the files needed for production
-curl -O https://raw.githubusercontent.com/Ijon6k/Song-moodboard/main/docker-compose.prod.yml
-mkdir -p docker/nginx
-curl -o docker/nginx/nginx.conf https://raw.githubusercontent.com/Ijon6k/Song-moodboard/main/docker/nginx/nginx.conf
-mkdir -p docker/seaweedfs
-curl -o docker/seaweedfs/s3.json https://raw.githubusercontent.com/Ijon6k/Song-moodboard/main/docker/seaweedfs/s3.json
-```
-
-> Or just `git clone` the repo and use the files from there. The prod compose only pulls images, nothing gets built.
-
-### 2. Create your `.env` file
-
-```bash
-cat > .env <<EOF
-# App
-PORT=1122
-APP_ORIGIN=http://your-server-ip:1122
-
-# Database
-DB_USER=songmoodboard
-DB_PASSWORD=change-me-please
-DB_NAME=songmoodboard_db
-
-# SeaweedFS S3
-SEAWEED_ACCESS_KEY=change-me
-SEAWEED_SECRET_KEY=change-me
-
-# Auth
-JWT_SECRET=change-this-to-something-long-and-random
-
-# Image versions (optional, defaults to :latest)
-# IMAGE_BACKEND=ghcr.io/ijon6k/song-moodboard-backend:v0.1.0
-# IMAGE_FRONTEND=ghcr.io/ijon6k/song-moodboard-frontend:v0.1.0
-EOF
-```
-
-### 3. Pull images and start
-
-```bash
-docker compose -f docker-compose.prod.yml pull
-docker compose -f docker-compose.prod.yml up -d
-```
-
-Open `http://your-server-ip:1122`.
-
-### Update to latest release
-
-```bash
-docker compose -f docker-compose.prod.yml pull
-docker compose -f docker-compose.prod.yml up -d --remove-orphans
-```
-
-### Rollback to a specific version
-
-```bash
-# By semver tag
-IMAGE_BACKEND=ghcr.io/ijon6k/song-moodboard-backend:v0.1.0 \
-IMAGE_FRONTEND=ghcr.io/ijon6k/song-moodboard-frontend:v0.1.0 \
-  docker compose -f docker-compose.prod.yml up -d
-
-# By commit SHA (for unreleased commits on main/dev)
-IMAGE_BACKEND=ghcr.io/ijon6k/song-moodboard-backend:sha-a3f9c21 \
-IMAGE_FRONTEND=ghcr.io/ijon6k/song-moodboard-frontend:sha-a3f9c21 \
-  docker compose -f docker-compose.prod.yml up -d
-```
-
----
-
-## Useful Commands
-
-```bash
-# Logs
-docker compose -f docker-compose.prod.yml logs -f
-
-# Status
-docker compose -f docker-compose.prod.yml ps
-
-# Stop
-docker compose -f docker-compose.prod.yml down
-
-# Stop + wipe all data (destructive!)
-docker compose -f docker-compose.prod.yml down -v
-```
-
----
-
-## Notes
-
-Only port `1122` is exposed to the host. Postgres, Redis, SeaweedFS, and the Go API are all internal and not reachable from outside.

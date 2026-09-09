@@ -1,0 +1,128 @@
+services:
+  # ---------------------------------------------------------------------------
+  # 1. Reverse Proxy: Nginx (The ONLY service exposing ports to the host)
+  # ---------------------------------------------------------------------------
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: songmoodboard_nginx_dev
+    restart: unless-stopped
+    ports:
+      - "1122:80"
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      backend:
+        condition: service_started
+      frontend:
+        condition: service_started
+    networks:
+      - song-moodboard-net
+
+  # ---------------------------------------------------------------------------
+  # 2. Frontend: SvelteKit SSR (Run via Bun)
+  # ---------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: songmoodboard_frontend_dev
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - HOST=0.0.0.0
+      - ORIGIN=http://localhost:1122
+    networks:
+      - song-moodboard-net
+
+  # ---------------------------------------------------------------------------
+  # 3. Backend: Go REST API (~15MB minimal Alpine binary)
+  # ---------------------------------------------------------------------------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: songmoodboard_backend_dev
+    restart: unless-stopped
+    environment:
+      - PORT=8080
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=songmoodboard
+      - DB_PASSWORD=songmoodboard_secret
+      - DB_NAME=songmoodboard_db
+      - DB_SSLMODE=disable
+      - REDIS_ADDR=redis:6379
+      - SEAWEED_ENDPOINT=seaweedfs:8333
+      - SEAWEED_ACCESS_KEY=anykey
+      - SEAWEED_SECRET_KEY=anysecret
+      - SEAWEED_BUCKET=songmoodboard
+      - JWT_SECRET=super-secret-twilight-haze-key-2026
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - song-moodboard-net
+
+  # ---------------------------------------------------------------------------
+  # 4. Relational Database: PostgreSQL 16
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: songmoodboard_postgres_dev
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=songmoodboard
+      - POSTGRES_PASSWORD=songmoodboard_secret
+      - POSTGRES_DB=songmoodboard_db
+    volumes:
+      - postgres_data_dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U songmoodboard -d songmoodboard_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - song-moodboard-net
+
+  # ---------------------------------------------------------------------------
+  # 5. In-Memory Cache & Session Engine: Redis 7
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: songmoodboard_redis_dev
+    restart: unless-stopped
+    volumes:
+      - redis_data_dev:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - song-moodboard-net
+
+  # ---------------------------------------------------------------------------
+  # 6. Distributed Object Storage: SeaweedFS (Master + Volume + Filer + S3)
+  # ---------------------------------------------------------------------------
+  seaweedfs:
+    image: chrislusf/seaweedfs:latest
+    container_name: songmoodboard_seaweedfs_dev
+    restart: unless-stopped
+    command: "server -s3 -s3.config=/etc/seaweedfs/s3.json -dir=/data"
+    volumes:
+      - seaweedfs_data_dev:/data
+      - ./docker/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+    networks:
+      - song-moodboard-net
+
+networks:
+  song-moodboard-net:
+    driver: bridge
+
+volumes:
+  postgres_data_dev:
+  redis_data_dev:
+  seaweedfs_data_dev:
