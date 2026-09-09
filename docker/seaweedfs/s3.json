@@ -1,0 +1,18 @@
+{
+  "identities": [
+    {
+      "name": "anonymous",
+      "actions": ["Admin", "Read", "Write"]
+    },
+    {
+      "name": "song-moodboard",
+      "credentials": [
+        {
+          "accessKey": "anykey",
+          "secretKey": "anysecret"
+        }
+      ],
+      "actions": ["Admin", "Read", "Write"]
+    }
+  ]
+}

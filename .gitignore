@@ -1,0 +1,30 @@
+# Dependencies
+frontend/node_modules/
+backend/vendor/
+
+# Build artifacts
+frontend/build/
+frontend/.svelte-kit/
+
+# Go binary
+backend/song-moodboard
+backend/*.exe
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Docker volumes / local data
+postgres_data/
+redis_data/
+seaweedfs_data/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
