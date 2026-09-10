@@ -59,9 +59,6 @@ services:
 
   # 2. Frontend: SvelteKit SSR (Pulls pre-built image or builds locally)
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
     image: ${IMAGE_FRONTEND:-song-moodboard-frontend:latest}
     container_name: songmoodboard_frontend
     restart: always
@@ -75,9 +72,6 @@ services:
 
   # 3. Backend: Go API + yt-dlp & FFmpeg engine (Pulls pre-built image or builds locally)
   backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
     image: ${IMAGE_BACKEND:-song-moodboard-backend:latest}
     container_name: songmoodboard_backend
     restart: always
